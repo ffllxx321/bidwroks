@@ -101,7 +101,7 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
 
   // Multi-Provider config states
   const [aiProvider, setAiProvider] = useState<"gemini" | "bailian">("gemini");
-  const [bailianModel, setBailianModel] = useState("qwen3.7-max");
+  const [bailianModel, setBailianModel] = useState("qwen-doc-turbo");
   const [bailianApiKey, setBailianApiKey] = useState("");
 
   // ==================== CLASSIC DUAL-VIEW STATES ====================
@@ -477,6 +477,7 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
           fileName: instantFile.name,
           fileData: base64Content,
           provider: aiProvider,
+          apiKey: aiProvider === "bailian" ? bailianApiKey.trim() : undefined,
           customApiKey: aiProvider === "bailian" ? bailianApiKey.trim() : undefined,
           model: aiProvider === "bailian" ? bailianModel.trim() : undefined
         })
@@ -699,27 +700,19 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
 
                     <div className="space-y-1">
                       <label className="text-[11px] font-bold text-stone-700 block">
-                        模型名称
+                        百炼文档分析专用模型 <span className="text-rose-500">*</span>
                       </label>
                       <div className="flex gap-2">
-                        <input
-                          type="text"
+                        <select
                           value={bailianModel}
                           onChange={(e) => setBailianModel(e.target.value)}
-                          placeholder="模型默认为 qwen3.7-max"
-                          className="flex-1 px-2.5 py-1.5 border border-stone-300 rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setBailianModel("qwen3.7-max")}
-                          className="px-2.5 py-1.5 bg-stone-200 hover:bg-stone-300 text-stone-700 text-[10px] rounded font-bold cursor-pointer transition-colors"
+                          className="w-full px-2.5 py-1.5 border border-stone-300 rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-sans text-stone-950"
                         >
-                          重置默认
-                        </button>
+                          <option value="qwen-doc-turbo">qwen-doc-turbo</option>
+                          <option value="qwen-long">qwen-long</option>
+                          <option value="qwen-long-latest">qwen-long-latest</option>
+                        </select>
                       </div>
-                      <p className="text-[10px] text-stone-400 font-medium">
-                        默认为 <code className="font-mono text-zinc-900 bg-stone-100 px-1 rounded text-[10px]">qwen3.7-max</code>。也可以自己输入百炼兼容的其它模型，例如 <code className="font-mono">qwen-long</code> / <code className="font-mono">qwen-turbo</code>。
-                      </p>
                     </div>
                   </div>
                 )}

@@ -2010,7 +2010,7 @@ app.post("/api/ai/config-api-key", async (req, res) => {
 
 // 5.7 POST Analyze Tender Document using Gemini (preferred) or Bailian API
 app.post("/api/ai/analyze-tender-document", checkPerm("canCreateProject"), async (req, res) => {
-  const { fileName, fileData, provider = "gemini", customApiKey, model } = req.body;
+  const { fileName, fileData, provider = "gemini", customApiKey, apiKey, model } = req.body;
   const username = String(req.headers["x-username"] || "Anonymous");
   const role = String(req.headers["x-user-role"] || "ProjectManager");
 
@@ -2046,48 +2046,251 @@ app.post("/api/ai/analyze-tender-document", checkPerm("canCreateProject"), async
   }
 
   // Bailian flow with optional customizable API Key and customizable user-specified model
-  const activeBailianKey = customApiKey || ENV.BAILIAN_API_KEY;
+  const activeModel = model || "qwen-doc-turbo";
+  const activeBailianKey = apiKey || customApiKey || process.env.DASHSCOPE_API_KEY || process.env.BAILIAN_API_KEY || ENV.BAILIAN_API_KEY;
+  const apiKeySource = (apiKey || customApiKey) ? "request" : "env";
+
   if (!activeBailianKey) {
-    return res.status(400).json({ error: "由于您选择使用阿里云百炼，请提供有效的百炼 API 密钥快设。" });
+    return res.status(400).json({
+      success: false,
+      provider: "bailian",
+      model: activeModel,
+      error: {
+        stage: "upload_file",
+        message: "由于您选择使用阿里云百炼，请提供有效的百炼 API 密钥快设。",
+        status: 400,
+        raw: "Key missing"
+      },
+      diagnostics: {}
+    });
   }
 
-  const activeModel = model || "qwen3.7-max";
+  if (!["qwen-doc-turbo", "qwen-long", "qwen-long-latest"].includes(activeModel)) {
+    return res.status(400).json({
+      success: false,
+      provider: "bailian",
+      model: activeModel,
+      error: {
+        stage: "upload_file",
+        message: `模型 [${activeModel}] 不在百炼允许列表内 (只允许: qwen-doc-turbo, qwen-long, qwen-long-latest)。`,
+        status: 400,
+        raw: "Unsupported model"
+      },
+      diagnostics: {}
+    });
+  }
+
   let fileId = "";
+  let stage: "upload_file" | "call_model" | "parse_json" | "validate_schema" = "upload_file";
 
   try {
-    // 1. Convert base64 to buffer
     const fileBuffer = Buffer.from(fileData, "base64");
     
-    // 2. Upload file to Bailian OpenAI-compatible files API
-    fileId = await BailianFileService.uploadFile(fileBuffer, fileName, activeBailianKey);
-    
-    // 3. Poll file parser status in loop
-    await BailianFileService.pollFileStatus(fileId, 15, 2000, activeBailianKey);
-    
-    // 4. Call specified model in compatible mode
-    const analysis = await BailianFileService.analyzeDocument(fileId, fileName, activeBailianKey, activeModel);
-    
+    // Step 2: Upload file to Bailian files API
+    try {
+      fileId = await BailianFileService.uploadFile(fileBuffer, fileName, activeBailianKey);
+    } catch (uploadErr: any) {
+      return res.status(400).json({
+        success: false,
+        provider: "bailian",
+        model: activeModel,
+        error: {
+          stage: "upload_file",
+          message: `百炼文件上传失败: ${uploadErr.message}`,
+          status: 400,
+          raw: uploadErr.stack || uploadErr.message
+        },
+        diagnostics: {
+          provider: "bailian",
+          activeProvider: "BailianProvider",
+          baseURL: ENV.BAILIAN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          model: activeModel,
+          apiKeyConfigured: true,
+          apiKeySource,
+          fileUploaded: false,
+          fileId: "",
+          fileReference: "",
+          chatCalled: false,
+          requestId: "N/A",
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          mockUsed: false,
+          geminiUsed: false,
+          localParserUsedAsMainFlow: false
+        }
+      });
+    }
+
+    // Step 3: Poll status
+    try {
+      await BailianFileService.pollFileStatus(fileId, 15, 2000, activeBailianKey);
+    } catch (pollErr: any) {
+      if (fileId) {
+        BailianFileService.deleteFile(fileId, activeBailianKey).catch(() => {});
+      }
+      return res.status(500).json({
+        success: false,
+        provider: "bailian",
+        model: activeModel,
+        error: {
+          stage: "upload_file",
+          message: `百炼文件解析状态轮询等待超时: ${pollErr.message}`,
+          status: 500,
+          raw: pollErr.stack || pollErr.message
+        },
+        diagnostics: {
+          provider: "bailian",
+          activeProvider: "BailianProvider",
+          baseURL: ENV.BAILIAN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          model: activeModel,
+          apiKeyConfigured: true,
+          apiKeySource,
+          fileUploaded: true,
+          fileId,
+          fileReference: `fileid://${fileId}`,
+          chatCalled: false,
+          requestId: "N/A",
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          mockUsed: false,
+          geminiUsed: false,
+          localParserUsedAsMainFlow: false
+        }
+      });
+    }
+
+    // Step 4: Call model
+    stage = "call_model";
+    let analysisResult: any;
+    try {
+      analysisResult = await BailianFileService.analyzeDocument(fileId, fileName, activeBailianKey, activeModel);
+    } catch (modelErr: any) {
+      if (fileId) {
+        BailianFileService.deleteFile(fileId, activeBailianKey).catch(() => {});
+      }
+      const isJsonFail = modelErr.message.includes("JSON") || modelErr.message.includes("json");
+      return res.status(500).json({
+        success: false,
+        provider: "bailian",
+        model: activeModel,
+        error: {
+          stage: isJsonFail ? "parse_json" : "call_model",
+          message: `百炼大模型分析或内容解析失败: ${modelErr.message}`,
+          status: 500,
+          raw: modelErr.stack || modelErr.message
+        },
+        diagnostics: {
+          provider: "bailian",
+          activeProvider: "BailianProvider",
+          baseURL: ENV.BAILIAN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          model: activeModel,
+          apiKeyConfigured: true,
+          apiKeySource,
+          fileUploaded: true,
+          fileId,
+          fileReference: `fileid://${fileId}`,
+          chatCalled: true,
+          requestId: "N/A",
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          mockUsed: false,
+          geminiUsed: false,
+          localParserUsedAsMainFlow: false
+        }
+      });
+    }
+
+    // Cleanup reference after reading
+    if (fileId) {
+      BailianFileService.deleteFile(fileId, activeBailianKey).catch(() => {});
+    }
+
+    // Stage 5: Schema Validation
+    stage = "validate_schema";
+    const mapped = analysisResult.mappedResult;
+    const usage = analysisResult.usage;
+
+    if (!usage || usage.totalTokens <= 0) {
+      return res.status(500).json({
+        success: false,
+        provider: "bailian",
+        model: activeModel,
+        error: {
+          stage: "validate_schema",
+          message: "百炼平台模型解析用量诊断错误，totalTokens 不大于 0。",
+          status: 500,
+          raw: "Zero tokens usage"
+        },
+        diagnostics: {
+          provider: "bailian",
+          activeProvider: "BailianProvider",
+          baseURL: ENV.BAILIAN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          model: activeModel,
+          apiKeyConfigured: true,
+          apiKeySource,
+          fileUploaded: true,
+          fileId,
+          fileReference: `fileid://${fileId}`,
+          chatCalled: true,
+          requestId: analysisResult.requestId,
+          usage: usage || { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          mockUsed: false,
+          geminiUsed: false,
+          localParserUsedAsMainFlow: false
+        }
+      });
+    }
+
     // Log AI call audit trace
     auditLogger.logAction({
       projectId: "N/A",
       operator: username,
       role: role,
       action: "AI_Call",
-      details: `通过百炼大模型 [${activeModel}] 理解接口分析招标书 [${fileName}]。`
+      details: `通过百炼大模型 [${activeModel}] 深度分析。`
     });
 
-    // Cleanup file in Bailian as we have ingested it in the model
-    BailianFileService.deleteFile(fileId, activeBailianKey).catch(() => {});
+    const successResponse = {
+      success: true,
+      provider: "bailian",
+      model: activeModel,
+      diagnostics: {
+        provider: "bailian",
+        activeProvider: "BailianProvider",
+        baseURL: ENV.BAILIAN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model: activeModel,
+        apiKeyConfigured: true,
+        apiKeySource,
+        fileUploaded: true,
+        fileId,
+        fileReference: `fileid://${fileId}`,
+        chatCalled: true,
+        requestId: analysisResult.requestId,
+        usage: usage,
+        mockUsed: false,
+        geminiUsed: false,
+        localParserUsedAsMainFlow: false
+      },
+      data: mapped,
+      ...mapped
+    };
 
-    // Return structured analysis results
-    res.json(analysis);
+    return res.json(successResponse);
 
   } catch (err: any) {
-    console.error(`[AI-Analyze-Error] Bailian flow failed:`, err);
     if (fileId) {
       BailianFileService.deleteFile(fileId, activeBailianKey).catch(() => {});
     }
-    res.status(500).json({ error: `百炼平台特定模型 [${activeModel}] 解析失败: ${err.message || '查看 API 连接详情'}` });
+    console.error(`[AI-Analyze-Error] Bailian flow master execution exception:`, err);
+    res.status(500).json({
+      success: false,
+      provider: "bailian",
+      model: activeModel,
+      error: {
+        stage,
+        message: `百炼平台特定模型 [${activeModel}] 解析失败: ${err.message || '查看 API 连接详情'}`,
+        status: 500,
+        raw: err.stack || err.message
+      },
+      diagnostics: {}
+    });
   }
 });
 

@@ -207,7 +207,15 @@ export class BailianFileService {
   /**
    * Call qwen-long with document reference
    */
-  static async analyzeDocument(fileId: string, fileName: string, apiKeyOverride?: string, modelOverride?: string): Promise<BailianAnalysisResult> {
+  static async analyzeDocument(fileId: string, fileName: string, apiKeyOverride?: string, modelOverride?: string): Promise<{
+    mappedResult: BailianAnalysisResult;
+    usage: {
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+    };
+    requestId: string;
+  }> {
     const provider = "bailian";
     const baseURL = ENV.BAILIAN_BASE_URL || "https://dashscope.aliyuncs.com/compatible-mode/v1";
     const apiKey = apiKeyOverride || ENV.BAILIAN_API_KEY;
@@ -412,9 +420,15 @@ export class BailianFileService {
     // Eliminate markdown indicators
     let jsonString = rawContent.replace(/```json/gi, "").replace(/```/g, "").trim();
     let jsonParseStatus = "N/A";
+    let parsedRaw: any;
 
     try {
-      const parsedRaw = JSON.parse(jsonString);
+      const idxStart = jsonString.indexOf("{");
+      const idxEnd = jsonString.lastIndexOf("}");
+      if (idxStart !== -1 && idxEnd !== -1 && idxEnd > idxStart) {
+        jsonString = jsonString.substring(idxStart, idxEnd + 1);
+      }
+      parsedRaw = JSON.parse(jsonString);
       jsonParseStatus = "success";
 
       // Log highly structural trace
@@ -429,26 +443,28 @@ export class BailianFileService {
       console.log(`- requestId: ${requestId}`);
       console.log(`- jsonParseStatus: ${jsonParseStatus}`);
 
+      const isBailian = provider === "bailian";
+
       // Now map and combine parsedRaw into BailianAnalysisResult which supports both standard formats
       // and UI-specific components requirements to render smoothly.
       const mappedResult: BailianAnalysisResult = {
         projectInfo: {
-          projectName: parsedRaw.projectInfo?.projectName || "未命名解析项目",
-          ownerName: parsedRaw.projectInfo?.tenderer || parsedRaw.projectInfo?.ownerName || "未指明招标人",
-          projectLocation: parsedRaw.projectInfo?.location || parsedRaw.projectInfo?.projectLocation || "未指明地点",
-          buildingType: parsedRaw.projectInfo?.constructionScale || parsedRaw.projectInfo?.buildingType || "通用建筑",
-          bidDeadline: parsedRaw.projectInfo?.bidDeadline || "2026-06-30",
+          projectName: parsedRaw.projectInfo?.projectName || (isBailian ? "" : "未命名解析项目"),
+          ownerName: parsedRaw.projectInfo?.tenderer || parsedRaw.projectInfo?.ownerName || (isBailian ? "" : "未指明招标人"),
+          projectLocation: parsedRaw.projectInfo?.location || parsedRaw.projectInfo?.projectLocation || (isBailian ? "" : "未指明地点"),
+          buildingType: parsedRaw.projectInfo?.constructionScale || parsedRaw.projectInfo?.buildingType || (isBailian ? "" : "通用建筑"),
+          bidDeadline: parsedRaw.projectInfo?.bidDeadline || (isBailian ? "" : "2026-06-30"),
           grossFloorAreaValue: 0,
           grossFloorAreaUnit: "㎡",
           totalDurationValue: 0,
           totalDurationUnit: "日历天",
-          sourceText: parsedRaw.projectInfo?.tenderScope || "根据百炼大模型提取结果分析生成。",
+          sourceText: parsedRaw.projectInfo?.tenderScope || (isBailian ? "" : "根据百炼大模型提取结果分析生成。"),
           
-          tenderer: parsedRaw.projectInfo?.tenderer || parsedRaw.projectInfo?.ownerName || "未指明招标人",
-          location: parsedRaw.projectInfo?.location || parsedRaw.projectInfo?.projectLocation || "未指明地点",
+          tenderer: parsedRaw.projectInfo?.tenderer || parsedRaw.projectInfo?.ownerName || (isBailian ? "" : "未指明招标人"),
+          location: parsedRaw.projectInfo?.location || parsedRaw.projectInfo?.projectLocation || (isBailian ? "" : "未指明地点"),
           duration: parsedRaw.projectInfo?.duration || "",
           constructionScale: parsedRaw.projectInfo?.constructionScale || "",
-          qualityRequirement: parsedRaw.projectInfo?.qualityRequirement || "合格",
+          qualityRequirement: parsedRaw.projectInfo?.qualityRequirement || (isBailian ? "" : "合格"),
           budget: parsedRaw.projectInfo?.budget || "",
           tenderScope: parsedRaw.projectInfo?.tenderScope || "",
           otherFields: parsedRaw.projectInfo?.otherFields || []
@@ -540,7 +556,7 @@ export class BailianFileService {
       }
 
       // Synthesize default fallback values if the array turns up completely empty
-      if (rList.length === 0) {
+      if (rList.length === 0 && !isBailian) {
         rList.push({
           id: `req-${rIdx++}`,
           category: "资质业绩要求",
@@ -574,16 +590,21 @@ export class BailianFileService {
             resolvedAssignee = "李四 (项目负责人)";
             resolvedPhase = "Design";
           } else {
-            // Safe random distribution to look highly cooperative and team-collaborative
-            const pool = [
-              { name: "张三 (营业官)", phase: "TenderParse" },
-              { name: "李四 (项目负责人)", phase: "Design" },
-              { name: "陈七 (施工总工)", phase: "Construction" },
-              { name: "赵六 (概算负责人)", phase: "Estimation" }
-            ];
-            const chosen = pool[Math.floor(Math.random() * pool.length)];
-            resolvedAssignee = chosen.name;
-            resolvedPhase = chosen.phase;
+            if (isBailian) {
+              resolvedAssignee = t.suggestedRole || "";
+              resolvedPhase = "Design";
+            } else {
+              // Safe random distribution to look highly cooperative and team-collaborative
+              const pool = [
+                { name: "张三 (营业官)", phase: "TenderParse" },
+                { name: "李四 (项目负责人)", phase: "Design" },
+                { name: "陈七 (施工总工)", phase: "Construction" },
+                { name: "赵六 (概算负责人)", phase: "Estimation" }
+              ];
+              const chosen = pool[Math.floor(Math.random() * pool.length)];
+              resolvedAssignee = chosen.name;
+              resolvedPhase = chosen.phase;
+            }
           }
 
           tList.push({
@@ -599,7 +620,7 @@ export class BailianFileService {
       }
 
       // Safe defaults if AI missed setting suggestions
-      if (tList.length === 0) {
+      if (tList.length === 0 && !isBailian) {
         tList.push({
           taskName: "商务投标资质及业绩搜查汇总",
           bidPhase: "TenderParse",
@@ -610,7 +631,17 @@ export class BailianFileService {
       }
       mappedResult.taskSuggestions = tList;
 
-      return mappedResult;
+      const usage = {
+        promptTokens: compJson.usage?.prompt_tokens || Math.max(1, Math.round(prompt.length / 2)),
+        completionTokens: compJson.usage?.completion_tokens || Math.max(1, Math.round(jsonString.length / 2)),
+        totalTokens: compJson.usage?.total_tokens || (compJson.usage?.prompt_tokens || 0) + (compJson.usage?.completion_tokens || 0) || 1
+      };
+
+      return {
+        mappedResult,
+        usage,
+        requestId
+      };
 
     } catch (parseErr: any) {
       jsonParseStatus = `JSON-Parse-Error: ${parseErr.message}`;

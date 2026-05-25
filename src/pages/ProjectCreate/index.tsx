@@ -56,7 +56,7 @@ export default function ProjectCreate({ onBack, onProjectCreated, currentUser }:
 
   // Multi-Provider config states
   const [aiProvider, setAiProvider] = useState<"gemini" | "bailian">("gemini");
-  const [bailianModel, setBailianModel] = useState("qwen3.7-max");
+  const [bailianModel, setBailianModel] = useState("qwen-doc-turbo");
   const [bailianApiKey, setBailianApiKey] = useState("");
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -134,6 +134,7 @@ export default function ProjectCreate({ onBack, onProjectCreated, currentUser }:
           fileName: file.name,
           fileData: base64Content,
           provider: aiProvider,
+          apiKey: aiProvider === "bailian" ? bailianApiKey.trim() : undefined,
           customApiKey: aiProvider === "bailian" ? bailianApiKey.trim() : undefined,
           model: aiProvider === "bailian" ? bailianModel.trim() : undefined
         })
@@ -399,23 +400,18 @@ export default function ProjectCreate({ onBack, onProjectCreated, currentUser }:
 
                   <div className="space-y-1">
                     <label className="text-[11px] font-bold text-stone-700 block">
-                      模型名称
+                      百炼文档分析专用模型 <span className="text-rose-500">*</span>
                     </label>
                     <div className="flex gap-2">
-                      <input
-                        type="text"
+                      <select
                         value={bailianModel}
                         onChange={(e) => setBailianModel(e.target.value)}
-                        placeholder="模型默认为 qwen3.7-max"
-                        className="flex-1 px-2.5 py-1.5 border border-stone-300 rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono text-stone-950"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setBailianModel("qwen3.7-max")}
-                        className="px-2.5 py-1.5 bg-stone-200 hover:bg-stone-300 text-stone-700 text-[10px] rounded font-bold cursor-pointer transition-colors"
+                        className="w-full px-2.5 py-1.5 border border-stone-300 rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-sans text-stone-950"
                       >
-                        重置默认
-                      </button>
+                        <option value="qwen-doc-turbo">qwen-doc-turbo</option>
+                        <option value="qwen-long">qwen-long</option>
+                        <option value="qwen-long-latest">qwen-long-latest</option>
+                      </select>
                     </div>
                   </div>
                 </div>
