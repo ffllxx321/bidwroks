@@ -1,0 +1,6 @@
+{
+  "name": "BidWorks",
+  "description": "BidWorks 投标一体化生产平台 MVP",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

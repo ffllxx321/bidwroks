@@ -1,0 +1,160 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  --brand: #1F5F8B;
+  --brand-hover: #174B70;
+  --brand-soft: #EAF3F8;
+
+  --navy: #17324D;
+  --blue-gray: #48657A;
+  --slate: #64748B;
+
+  --bg-page: #F4F7F9;
+  --bg-surface: #FFFFFF;
+  --bg-subtle: #F8FAFC;
+
+  --text-primary: #1E293B;
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
+
+  --border: #D6DEE6;
+  --border-subtle: #E6ECF1;
+
+  --success: #2F6B57;
+  --warning: #9A6A16;
+  --danger: #B54747;
+  --info: #2F6F9F;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.06);
+  --shadow-popover: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+
+@theme {
+  --font-sans: "Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-soft: var(--brand-soft);
+  --color-navy: var(--navy);
+  --color-blue-gray: var(--blue-gray);
+  --color-slate: var(--slate);
+  --color-bg-page: var(--bg-page);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-subtle: var(--bg-subtle);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+}
+
+/* Custom Shimizu-style Engineering Styling Utilities */
+.pmd-border {
+  border: 1px solid var(--border);
+}
+
+.pmd-shadow-sm {
+  box-shadow: var(--shadow-card);
+}
+
+.pmd-shadow-md {
+  box-shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.05), 0 2px 4px -2px rgba(15, 23, 42, 0.05);
+}
+
+.pmd-shadow-lg {
+  box-shadow: var(--shadow-popover);
+}
+
+.pmd-shadow-orange {
+  box-shadow: 0 0 0 2px rgba(31, 95, 139, 0.1);
+}
+
+.pmd-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.pmd-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px -4px rgba(15, 23, 42, 0.08);
+}
+
+.pmd-card-active {
+  background-color: var(--bg-surface);
+  border: 1.5px solid var(--brand);
+  box-shadow: 0 0 0 2px rgba(31, 95, 139, 0.1);
+}
+
+.pmd-btn {
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  transition: all 0.15s ease;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.pmd-btn:hover {
+  background-color: var(--bg-page);
+  border-color: #B2BAC6;
+}
+
+.pmd-btn:active {
+  transform: translateY(1px);
+}
+
+.pmd-btn-orange {
+  background-color: var(--brand) !important;
+  color: #FFF !important;
+  border-color: var(--brand) !important;
+}
+
+.pmd-btn-orange:hover {
+  background-color: var(--brand-hover) !important;
+  border-color: var(--brand-hover) !important;
+}
+
+.grid-pmd {
+  background-color: var(--border-subtle);
+  display: grid;
+  gap: 1px;
+}
+
+.neon-green-text {
+  color: var(--success);
+}
+
+/* Custom scrollbars for data panels - Clean, subtle and professional */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-page);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-sm);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}

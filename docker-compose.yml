@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: bidworks-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: bidworks_mvp
+      POSTGRES_USER: bidworks_user
+      POSTGRES_PASSWORD: password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bidworks_user -d bidworks_mvp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+    driver: local

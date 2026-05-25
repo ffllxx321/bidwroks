@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Shimizu Corporation-style elegant geometric corporate monogram/logo draft -->
+  <rect x="10" y="10" width="80" height="80" rx="4" fill="#1F5F8B" />
+  <path d="M50 22 L25 50 L35 50 L50 34 L65 50 L75 50 Z" fill="#FFFFFF" />
+  <path d="M50 44 L30 67 L42 67 L50 58 L58 67 L70 67 Z" fill="#FFFFFF" />
+  <rect x="46" y="65" width="8" height="13" fill="#FFFFFF" />
+</svg>
