@@ -10,8 +10,8 @@ import { parseDocumentToChunks } from "./backend/src/modules/ai/document-parser.
 import { verifyAIPermission } from "./backend/src/modules/permissions/ai-permission-checker.ts";
 import { extractTenderParamsFromChunks } from "./backend/src/modules/ai/extraction-engine.ts";
 import { ENV } from "./backend/src/config/env.ts";
-import { getAiConfigDiagnostics, isDevelopmentRuntime, saveDashscopeApiKey } from "./backend/src/config/ai-runtime-config.ts";
 import { BailianFileService } from "./backend/src/modules/ai/bailian-file-service.ts";
+import { isDevelopmentRuntime, getAiConfigDiagnostics, saveDashscopeApiKey } from "./backend/src/config/ai-runtime-config.ts";
 
 dotenv.config();
 
@@ -1981,31 +1981,36 @@ app.get("/api/ai/active-provider", (req, res) => {
 
 // 5.6 GET active AI provider diagnostics (development only)
 app.get("/api/ai/config-diagnostics", (req, res) => {
-  if (!isDevelopmentRuntime()) {
+  const isDev = isDevelopmentRuntime();
+  if (!isDev) {
     return res.status(403).json({ error: "Diagnostics endpoint only allowed in development mode." });
   }
-
   res.json(getAiConfigDiagnostics());
 });
 
-// 5.6.1 POST save local DashScope API key (development only)
-app.post("/api/ai/config-api-key", (req, res) => {
-  if (!isDevelopmentRuntime()) {
-    return res.status(403).json({ error: "API key configuration endpoint only allowed in development mode." });
+// POST /api/ai/config-api-key for dynamic hot reloading of API keys in development
+app.post("/api/ai/config-api-key", async (req, res) => {
+  const isDev = isDevelopmentRuntime();
+  if (!isDev) {
+    return res.status(403).json({ error: "Configuration endpoint only allowed in development mode." });
   }
 
-  const apiKey = String(req.body?.apiKey || "").trim();
+  const { apiKey } = req.body;
+  if (!apiKey || typeof apiKey !== "string" || apiKey.trim() === "") {
+    return res.status(400).json({ error: "API Key 不能为空！" });
+  }
+
   try {
-    const result = saveDashscopeApiKey(apiKey);
+    const result = await saveDashscopeApiKey(apiKey);
     res.json(result);
   } catch (err: any) {
-    res.status(400).json({ error: err.message || "Failed to save API key." });
+    res.status(500).json({ error: `保存 API Key 失败: ${err.message}` });
   }
 });
 
-// 5.7 POST Analyze Tender Document using Bailian compatible files API
+// 5.7 POST Analyze Tender Document using Gemini (preferred) or Bailian API
 app.post("/api/ai/analyze-tender-document", checkPerm("canCreateProject"), async (req, res) => {
-  const { fileName, fileData } = req.body;
+  const { fileName, fileData, provider = "gemini", customApiKey, model } = req.body;
   const username = String(req.headers["x-username"] || "Anonymous");
   const role = String(req.headers["x-user-role"] || "ProjectManager");
 
@@ -2013,23 +2018,54 @@ app.post("/api/ai/analyze-tender-document", checkPerm("canCreateProject"), async
     return res.status(400).json({ error: "招标文件分析错误：文件名 (fileName) 或文件内容 (fileData) 缺失！" });
   }
 
-  if (!ENV.BAILIAN_API_KEY) {
-    return res.status(500).json({ error: "AI 辅助解析失败：百炼 API 密钥 (DASHSCOPE_API_KEY 或 BAILIAN_API_KEY) 未在后台配置。" });
+  const useGemini = provider === "gemini";
+
+  if (useGemini) {
+    const geminiKey = process.env.GEMINI_API_KEY;
+    if (!geminiKey) {
+      return res.status(400).json({ error: "内置 Gemini 服务未就绪，缺少运行时 GEMINI_API_KEY 配置。" });
+    }
+    console.log(`[AI-GATEWAY] Executing search-free native Gemini document analysis flow for file: ${fileName}`);
+    try {
+      const analysis = await BailianFileService.analyzeDocumentWithGemini(fileData, fileName);
+      
+      // Log AI call audit trace
+      auditLogger.logAction({
+        projectId: "N/A",
+        operator: username,
+        role: role,
+        action: "AI_Call",
+        details: `通过 Google Gemini 3.5 Flash 深度分析招标书大文件 [${fileName}]。`
+      });
+
+      return res.json(analysis);
+    } catch (geminiErr: any) {
+      console.error(`[AI-Analyze-Error] Gemini native flow failed:`, geminiErr);
+      return res.status(500).json({ error: `内置 Gemini 解析失败: ${geminiErr.message}` });
+    }
   }
 
+  // Bailian flow with optional customizable API Key and customizable user-specified model
+  const activeBailianKey = customApiKey || ENV.BAILIAN_API_KEY;
+  if (!activeBailianKey) {
+    return res.status(400).json({ error: "由于您选择使用阿里云百炼，请提供有效的百炼 API 密钥快设。" });
+  }
+
+  const activeModel = model || "qwen3.7-max";
   let fileId = "";
+
   try {
     // 1. Convert base64 to buffer
     const fileBuffer = Buffer.from(fileData, "base64");
     
     // 2. Upload file to Bailian OpenAI-compatible files API
-    fileId = await BailianFileService.uploadFile(fileBuffer, fileName);
+    fileId = await BailianFileService.uploadFile(fileBuffer, fileName, activeBailianKey);
     
     // 3. Poll file parser status in loop
-    await BailianFileService.pollFileStatus(fileId, 15, 2000);
+    await BailianFileService.pollFileStatus(fileId, 15, 2000, activeBailianKey);
     
-    // 4. Call qwen-long to process document in compatible mode
-    const analysis = await BailianFileService.analyzeDocument(fileId, fileName);
+    // 4. Call specified model in compatible mode
+    const analysis = await BailianFileService.analyzeDocument(fileId, fileName, activeBailianKey, activeModel);
     
     // Log AI call audit trace
     auditLogger.logAction({
@@ -2037,21 +2073,21 @@ app.post("/api/ai/analyze-tender-document", checkPerm("canCreateProject"), async
       operator: username,
       role: role,
       action: "AI_Call",
-      details: `通过百炼官方文档理解接口分析招标书 [${fileName}]。文件ID: ${fileId}。`
+      details: `通过百炼大模型 [${activeModel}] 理解接口分析招标书 [${fileName}]。`
     });
 
     // Cleanup file in Bailian as we have ingested it in the model
-    BailianFileService.deleteFile(fileId).catch(() => {});
+    BailianFileService.deleteFile(fileId, activeBailianKey).catch(() => {});
 
     // Return structured analysis results
     res.json(analysis);
 
   } catch (err: any) {
-    console.error(`[AI-Analyze-Error] Full flow failed:`, err);
+    console.error(`[AI-Analyze-Error] Bailian flow failed:`, err);
     if (fileId) {
-      BailianFileService.deleteFile(fileId).catch(() => {});
+      BailianFileService.deleteFile(fileId, activeBailianKey).catch(() => {});
     }
-    res.status(500).json({ error: `招标文件理解失败: ${err.message || '未知业务错误'}` });
+    res.status(500).json({ error: `百炼平台特定模型 [${activeModel}] 解析失败: ${err.message || '查看 API 连接详情'}` });
   }
 });
 

@@ -1,8 +1,21 @@
 import fs from "fs";
 import mammoth from "mammoth";
 import { createRequire } from "module";
-const require = createRequire(import.meta.url);
-const pdfParse = require("pdf-parse");
+
+// Safe Require helper to support ES bundle and CommonJS environments seamlessly
+let pdfParse: any;
+try {
+  if (typeof require !== "undefined") {
+    pdfParse = require("pdf-parse");
+  } else {
+    const metaUrl = (typeof import.meta !== "undefined" && import.meta.url) || "file:///";
+    pdfParse = createRequire(metaUrl)("pdf-parse");
+  }
+} catch (err) {
+  const metaUrl = (typeof import.meta !== "undefined" && import.meta.url) || "file:///";
+  pdfParse = createRequire(metaUrl)("pdf-parse");
+}
+
 import db from "../../database/db.ts";
 
 export interface ParsedChunk {
@@ -39,30 +52,71 @@ export async function parseDocumentToChunks(
         });
       });
     } else if (fileType === "pdf") {
-      // pdf-parse options to identify sheet separators (form feed \u000c is standard)
-      const data = await pdfParse(buffer);
-      const rawText = data.text || "";
-      
-      // Page division using form feeds
-      const pages = rawText.split("\u000c");
-      let pageNum = 1;
+      let extractedWithNewClass = false;
 
-      for (const pageText of pages) {
-        const paragraphs = pageText
-          .split(/\r?\n/)
-          .map(p => p.trim())
-          .filter(p => p.length > 0);
+      if (pdfParse && typeof pdfParse.PDFParse === "function") {
+        console.log("[DOCUMENT-PARSER] Invoking new class-based PDFParse extracted pages flow...");
+        const parser = new pdfParse.PDFParse({ data: buffer });
+        try {
+          const textResult = await parser.getText();
+          if (textResult && Array.isArray(textResult.pages)) {
+            for (const page of textResult.pages) {
+              const paragraphs = page.text
+                .split(/\r?\n/)
+                .map(p => p.trim())
+                .filter(p => p.length > 0);
 
-        let paraIdx = 1;
-        for (const para of paragraphs) {
-          chunks.push({
-            pageNumber: pageNum,
-            paragraphIndex: paraIdx,
-            textContent: para
-          });
-          paraIdx++;
+              let paraIdx = 1;
+              for (const para of paragraphs) {
+                chunks.push({
+                  pageNumber: page.num,
+                  paragraphIndex: paraIdx,
+                  textContent: para
+                });
+                paraIdx++;
+              }
+            }
+            extractedWithNewClass = true;
+          }
+        } finally {
+          await parser.destroy().catch(() => {});
         }
-        pageNum++;
+      }
+
+      if (!extractedWithNewClass) {
+        console.log("[DOCUMENT-PARSER] Falling back to standard/legacy pdfParse function flow...");
+        let rawText = "";
+        let parsedData: any;
+
+        if (typeof pdfParse === "function") {
+          parsedData = await pdfParse(buffer);
+        } else if (pdfParse && typeof pdfParse.default === "function") {
+          parsedData = await pdfParse.default(buffer);
+        } else {
+          throw new Error("Cannot find a valid pdf-parse function or constructor.");
+        }
+
+        rawText = parsedData?.text || "";
+        const pages = rawText.split("\u000c");
+        let pageNum = 1;
+
+        for (const pageText of pages) {
+          const paragraphs = pageText
+            .split(/\r?\n/)
+            .map(p => p.trim())
+            .filter(p => p.length > 0);
+
+          let paraIdx = 1;
+          for (const para of paragraphs) {
+            chunks.push({
+              pageNumber: pageNum,
+              paragraphIndex: paraIdx,
+              textContent: para
+            });
+            paraIdx++;
+          }
+          pageNum++;
+        }
       }
     }
   } catch (error: any) {

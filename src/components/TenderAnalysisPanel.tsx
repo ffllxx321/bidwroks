@@ -91,17 +91,18 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
   // Modes: 'instant' (new official Bailian full panel update) vs 'classic' (the split dual book screen)
   const [panelMode, setPanelMode] = useState<"instant" | "classic">("instant");
 
-  // ==================== INSTANT TAB (BAILIAN OFFICIAL FULL OVERHAUL) STATES ====================
+  // ==================== INSTANT TAB (OFFICIAL FULL OVERHAUL) STATES ====================
   const [instantFile, setInstantFile] = useState<File | null>(null);
   const [instantParsing, setInstantParsing] = useState(false);
   const [instantStep, setInstantStep] = useState("");
   const [instantResult, setInstantResult] = useState<AnalysisResult | null>(null);
   const [instantSubmitting, setInstantSubmitting] = useState(false);
   const [instantTab, setInstantTab] = useState<"info" | "reqs" | "tasks">("info");
-  const [aiDiagnostics, setAiDiagnostics] = useState<any>(null);
-  const [apiKeyInput, setApiKeyInput] = useState("");
-  const [apiKeySaving, setApiKeySaving] = useState(false);
-  const [apiKeyMessage, setApiKeyMessage] = useState<string | null>(null);
+
+  // Multi-Provider config states
+  const [aiProvider, setAiProvider] = useState<"gemini" | "bailian">("gemini");
+  const [bailianModel, setBailianModel] = useState("qwen3.7-max");
+  const [bailianApiKey, setBailianApiKey] = useState("");
 
   // ==================== CLASSIC DUAL-VIEW STATES ====================
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
@@ -133,30 +134,37 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
     "x-username": currentUser.username
   };
 
+  // Diagnostics & API Key management states
+  const [aiDiagnostics, setAiDiagnostics] = useState<any>(null);
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [apiKeySaving, setApiKeySaving] = useState(false);
+  const [apiKeyMessage, setApiKeyMessage] = useState<{ text: string; isError: boolean } | null>(null);
+
   useEffect(() => {
     loadDocuments();
-    loadAiDiagnostics();
+    fetchDiagnostics();
   }, [projectId]);
 
-  const loadAiDiagnostics = async () => {
+  const fetchDiagnostics = async () => {
     try {
-      const res = await fetch("/api/ai/config-diagnostics");
+      const res = await fetch("/api/ai/config-diagnostics", { headers });
       if (res.ok) {
         const data = await res.json();
         setAiDiagnostics(data);
+      } else {
+        setAiDiagnostics({ productionMode: true });
       }
-    } catch {
-      // Diagnostics are development-only; absence should not block the page.
+    } catch (err) {
+      console.warn("Could not load AI diagnostics", err);
+      setAiDiagnostics({ error: true });
     }
   };
 
   const handleSaveApiKey = async () => {
-    const trimmedKey = apiKeyInput.trim();
-    if (!trimmedKey) {
-      setApiKeyMessage("Enter a DashScope / Qwen-Long API key.");
+    if (!apiKeyInput.trim()) {
+      setApiKeyMessage({ text: "API Key 不能为空！", isError: true });
       return;
     }
-
     setApiKeySaving(true);
     setApiKeyMessage(null);
     try {
@@ -166,17 +174,17 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
           "Content-Type": "application/json",
           ...headers
         },
-        body: JSON.stringify({ apiKey: trimmedKey })
+        body: JSON.stringify({ apiKey: apiKeyInput })
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "API key save failed");
+        throw new Error(data.error || "保存失败");
       }
+      setApiKeyMessage({ text: `保存成功！API Key 已生效: ${data.maskedKey}`, isError: false });
       setApiKeyInput("");
       setAiDiagnostics(data.diagnostics);
-      setApiKeyMessage(`Saved to local .env: ${data.maskedKey}`);
     } catch (err: any) {
-      setApiKeyMessage(err.message || "API key save failed");
+      setApiKeyMessage({ text: err.message || "保存 API Key 异常", isError: true });
     } finally {
       setApiKeySaving(false);
     }
@@ -443,21 +451,21 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
   const handleInstantAIParse = async () => {
     if (!instantFile) return alert("请先选择要上传的补充/修改招标文件！");
 
-    if (aiDiagnostics && !aiDiagnostics.resolvedApiKeyConfigured) {
-      setGeneralError("Save a DashScope / Qwen-Long API key before running Bailian document analysis.");
+    if (aiProvider === "bailian" && !bailianApiKey.trim() && !aiDiagnostics?.bailianApiKeyConfigured) {
+      setGeneralError("⚠️ 请先输入您在阿里云百炼（DashScope）平台的 API Key 以执行调用！");
       return;
     }
 
     setInstantParsing(true);
     setGeneralError(null);
-    setInstantStep("1/4: 正在读取本地并准备进行大容量编码...");
+    setInstantStep("1/4: 正在读取并准备分析文档大容量数据...");
 
     try {
       const base64Content = await convertFileToBase64(instantFile);
-      setInstantStep("2/4: 正在通过百炼 OpenAI 兼容接口将文件转往云端解析库...");
+      setInstantStep(`2/4: 正在将文件安全转往云端解析处理器 [使用 ${aiProvider === "gemini" ? "内置 Gemini" : (`百炼 ${bailianModel}`)}]...`);
       
       await new Promise(r => setTimeout(r, 600));
-      setInstantStep("3/4: 云端上传就绪，正在命令百炼深度解析分词建档并提供长上下文支持...");
+      setInstantStep("3/4: 云端上传就绪，正在命令大语言模型执行深度语义解析分词与红线要素提炼...");
 
       const res = await fetch("/api/ai/analyze-tender-document", {
         method: "POST",
@@ -467,22 +475,25 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
         },
         body: JSON.stringify({
           fileName: instantFile.name,
-          fileData: base64Content
+          fileData: base64Content,
+          provider: aiProvider,
+          customApiKey: aiProvider === "bailian" ? bailianApiKey.trim() : undefined,
+          model: aiProvider === "bailian" ? bailianModel.trim() : undefined
         })
       });
 
       if (!res.ok) {
         const errReply = await res.json();
-        throw new Error(errReply.error || "模型处理异常");
+        throw new Error(errReply.error || "大模型处理异常，这可能是网络或密钥不匹配导致的值不可回传。");
       }
 
-      setInstantStep("4/4: 解析就绪！正在通过 qwen-long 建立投标主数据匹配与工期/文明定级等工作包排期...");
+      setInstantStep("4/4: 解析就绪！正在匹配与提炼各项投标指标及生成编制指引任务包...");
       const reply = await res.json();
       setInstantResult(reply);
       setInstantStep("");
     } catch (err: any) {
       console.error(err);
-      setGeneralError(`❌ 百炼官方文件提取失败: ${err.message || "请求服务器未响应"}`);
+      setGeneralError(`❌ 智能文档文件提取失败: ${err.message || "请求服务器未响应"}`);
     } finally {
       setInstantParsing(false);
     }
@@ -519,7 +530,7 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
         throw new Error(errJson.error || "确认写入数据库出错");
       }
 
-      setSuccessInfo(`🎉 百炼全案解析更新成功！主数据字段已订正，追加了 ${instantResult.tenderRequirements.length} 条表单，启动了 ${instantResult.taskSuggestions.length} 项分析任务包。`);
+      setSuccessInfo(`🎉 智能全案解析更新成功！主数据字段已订正，追加了 ${instantResult.tenderRequirements.length} 条表单，启动了 ${instantResult.taskSuggestions.length} 项分析任务包。`);
       setInstantResult(null);
       setInstantFile(null);
       
@@ -563,7 +574,7 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
             className={`px-4 py-2 flex items-center gap-1 rounded-md transition-all ${panelMode === "instant" ? 'bg-brand text-white' : 'text-stone-500 hover:text-stone-800'}`}
           >
             <Sparkles className="w-4 h-4" /> 
-            <span>1. 百炼官方大文件解析 (全案核准更新)</span>
+            <span>1. 智能文档全案解析 (全案核准更新)</span>
           </button>
           <button 
             type="button"
@@ -580,17 +591,17 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
       </div>
 
       {generalError && (
-        <div className="p-4 border border-rose-200 bg-rose-50 text-rose-950 font-sans text-xs flex items-start gap-3 rounded-lg shadow-sm">
+        <div className="p-4 border border-rose-200 bg-rose-50 text-rose-950 font-sans text-xs flex items-start gap-3 rounded-lg shadow-sm animate-fadeIn">
           <AlertOctagon className="w-5 h-5 text-rose-600 mt-0.5 flex-shrink-0" />
           <div className="flex-1">
-            <h4 className="font-bold mb-1">百炼链路推进受到了警告</h4>
+            <h4 className="font-bold mb-1">智能解析接口提示与错误</h4>
             <p className="font-medium">{generalError}</p>
           </div>
         </div>
       )}
 
       {successInfo && (
-        <div className="p-4 border border-emerald-200 bg-emerald-50 text-emerald-950 font-sans text-xs flex items-start gap-3 rounded-lg shadow-sm">
+        <div className="p-4 border border-emerald-200 bg-emerald-50 text-emerald-950 font-sans text-xs flex items-start gap-3 rounded-lg shadow-sm animate-fadeIn">
           <CheckCircle className="w-5 h-5 text-emerald-600 mt-0.5 flex-shrink-0" />
           <div className="flex-1">
             <h4 className="font-bold mb-1">操作执行成功</h4>
@@ -607,59 +618,110 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
               <div className="space-y-2">
                 <Sparkles className="w-10 h-10 text-brand mx-auto animate-pulse" />
                 <h3 className="text-base font-bold text-stone-900 font-sans">
-                  百炼深度文档分析及项目数据更新
+                  智能文档全量对比提炼与数据更新
                 </h3>
                 <p className="text-xs text-stone-500 max-w-md mx-auto leading-relaxed">
-                  导入该项目的补充招标文件或更新版要求包，由阿里云百炼（qwen-long）深度对比提炼，一次性产出主数据指标、合规红线与追加协同任务，助你一键人工确认！
+                  导入补充招标文件或全新要求包，由大语言模型深度分析提炼，一键生成项目主数据指标、硬性合规要求与追加任务。
                 </p>
               </div>
 
-              <div className="border border-stone-200 rounded-lg p-4 bg-white text-left space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <ShieldAlert className={`w-4 h-4 ${aiDiagnostics?.resolvedApiKeyConfigured ? "text-emerald-600" : "text-amber-600"}`} />
-                    <div>
-                      <p className="text-xs font-bold text-stone-900">Qwen-Long API Key</p>
-                      <p className="text-[10px] text-stone-500">
-                        {aiDiagnostics?.resolvedApiKeyConfigured
-                          ? `Configured for ${aiDiagnostics.model || "qwen-long"}`
-                          : "Not configured. Save a local development key first."}
+              {/* MODEL AND PROVIDER SWITCHER */}
+              <div className="bg-stone-50 border border-stone-200 rounded-lg p-4 text-left space-y-4 shadow-sm">
+                <div className="flex items-center justify-between border-b border-stone-200 pb-2">
+                  <span className="text-xs font-bold text-stone-850 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-zinc-900" />
+                    解析大模型与解析引擎配置
+                  </span>
+                  <span className="text-[10px] text-stone-400 font-mono">
+                    默认强力推荐 Gemini 核心
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiProvider("gemini");
+                      setGeneralError(null);
+                    }}
+                    className={`py-2 px-3 rounded-md text-xs font-bold font-sans transition-all flex items-center justify-center gap-1.5 border cursor-pointer ${
+                      aiProvider === "gemini"
+                        ? "bg-zinc-900 text-white border-zinc-900 shadow-sm"
+                        : "bg-white text-stone-600 border-stone-200 hover:bg-stone-100"
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                    内置 Gemini (默认)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAiProvider("bailian");
+                      setGeneralError(null);
+                    }}
+                    className={`py-2 px-3 rounded-md text-xs font-bold font-sans transition-all flex items-center justify-center gap-1.5 border cursor-pointer ${
+                      aiProvider === "bailian"
+                        ? "bg-zinc-900 text-white border-zinc-900 shadow-sm"
+                        : "bg-white text-stone-600 border-stone-200 hover:bg-stone-100"
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    阿里云百炼平台调用
+                  </button>
+                </div>
+
+                {aiProvider === "gemini" && (
+                  <div className="p-3 bg-emerald-50/55 border border-emerald-100 rounded text-[11px] text-emerald-900 leading-relaxed font-sans">
+                    <p className="font-bold mb-0.5">🌟 推荐说明：内置 Gemini 极速智能解析</p>
+                    <p className="text-stone-600 font-medium">
+                      系统已自动集成 Google Gemini 3.5 Flash 高性能开发组件，免去个人复杂的 API 流程配置。长上下文理解出类拔萃，推荐直接用于项目！
+                    </p>
+                  </div>
+                )}
+
+                {aiProvider === "bailian" && (
+                  <div className="space-y-3 p-3 bg-amber-50/30 border border-amber-200/50 rounded-lg animate-fadeIn">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-stone-700 block">
+                        阿里云百炼 API Key <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="password"
+                        value={bailianApiKey}
+                        onChange={(e) => setBailianApiKey(e.target.value)}
+                        placeholder={aiDiagnostics?.resolvedApiKeyConfigured ? "已配置后台推荐 Key (若想覆盖，请在此输入个人 Key)" : "请输入您的 DASHSCOPE_API_KEY..."}
+                        className="w-full px-2.5 py-1.5 border border-stone-300 rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                      <p className="text-[10px] text-stone-400">
+                        如果选择百炼，且您的后端环境中没有配置 DASHSCOPE_API_KEY，必须在此手动输入您的 API Key。
+                      </p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-stone-700 block">
+                        模型名称
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={bailianModel}
+                          onChange={(e) => setBailianModel(e.target.value)}
+                          placeholder="模型默认为 qwen3.7-max"
+                          className="flex-1 px-2.5 py-1.5 border border-stone-300 rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setBailianModel("qwen3.7-max")}
+                          className="px-2.5 py-1.5 bg-stone-200 hover:bg-stone-300 text-stone-700 text-[10px] rounded font-bold cursor-pointer transition-colors"
+                        >
+                          重置默认
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-stone-400 font-medium">
+                        默认为 <code className="font-mono text-zinc-900 bg-stone-100 px-1 rounded text-[10px]">qwen3.7-max</code>。也可以自己输入百炼兼容的其它模型，例如 <code className="font-mono">qwen-long</code> / <code className="font-mono">qwen-turbo</code>。
                       </p>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={loadAiDiagnostics}
-                    className="p-2 border border-stone-200 rounded-md text-stone-500 hover:text-stone-900 hover:bg-stone-50"
-                    title="Refresh config status"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                <div className="flex gap-2">
-                  <input
-                    type="password"
-                    value={apiKeyInput}
-                    onChange={(e) => setApiKeyInput(e.target.value)}
-                    placeholder="Paste DashScope / Qwen-Long API key"
-                    className="flex-1 px-3 py-2 border border-stone-200 rounded-md text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                    autoComplete="off"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSaveApiKey}
-                    disabled={apiKeySaving}
-                    className="px-4 py-2 bg-stone-900 text-white text-xs font-bold rounded-md hover:bg-stone-800 disabled:opacity-50"
-                  >
-                    {apiKeySaving ? "Saving" : "Save"}
-                  </button>
-                </div>
-
-                {apiKeyMessage && (
-                  <p className={`text-[10px] font-medium ${apiKeyMessage.includes("Saved") ? "text-emerald-700" : "text-rose-700"}`}>
-                    {apiKeyMessage}
-                  </p>
                 )}
               </div>
 
@@ -678,10 +740,10 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
                 <div className="space-y-2">
                   <Upload className="w-8 h-8 text-stone-400 mx-auto" strokeWidth={1.5} />
                   <p className="font-sans font-bold text-xs text-stone-700">
-                    {instantFile ? `已选定文件: ${instantFile.name}` : "选择新的补充/招标文件以更新此项目"}
+                    {instantFile ? `已选定文件: ${instantFile.name}` : "选择补充/最新版招标文件以启动处理更新"}
                   </p>
                   <p className="text-[10px] text-stone-400">
-                    支持 .docx, .pdf。上传后将启动大模型全量提炼。
+                    支持 .docx, .pdf 等智能建档全上下文读取
                   </p>
                 </div>
               </div>
@@ -689,27 +751,37 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
               <button
                 type="button"
                 onClick={handleInstantAIParse}
-                disabled={instantParsing || !instantFile || Boolean(aiDiagnostics && !aiDiagnostics.resolvedApiKeyConfigured)}
+                disabled={
+                  instantParsing || 
+                  !instantFile || 
+                  (aiProvider === "bailian" && !bailianApiKey.trim() && !aiDiagnostics?.resolvedApiKeyConfigured)
+                }
                 className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-sans font-bold text-xs rounded-lg flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:bg-stone-300"
               >
                 {instantParsing ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>大模型长文本处理中...</span>
+                    <span>大语言模型正在倾力理解大容量文本中...</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    <span>执行百炼大模型辅助提取</span>
+                    <span>执行大模型智能解析提取</span>
                   </>
                 )}
               </button>
+
+              {aiProvider === "bailian" && !bailianApiKey.trim() && !aiDiagnostics?.resolvedApiKeyConfigured && (
+                <div className="p-3 bg-amber-50 border border-amber-200/50 rounded-md text-[11px] text-amber-800 font-sans text-left">
+                  ⚠️ 您选择了阿里云百炼解析引擎。请在上方输入您的 DashScope API Key，或者让系统管理员在服务器端预置该账户密钥。
+                </div>
+              )}
 
               {instantParsing && (
                 <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-md text-[11px] text-emerald-950 font-sans text-left">
                   <span className="font-bold flex items-center gap-1.5 mb-1 text-emerald-900">
                     <span className="w-2 h-2 rounded-full bg-emerald-600 animate-ping" />
-                    百炼官方运行链路状态：
+                    智能运行解析链路状态：
                   </span>
                   <p className="font-mono text-stone-600">{instantStep}</p>
                 </div>
@@ -864,7 +936,7 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
                   </div>
 
                   <div className="p-3 bg-stone-50 border-l-4 border-emerald-500 mt-4 leading-relaxed font-sans text-[11px] text-stone-600">
-                    <div><b>📄 百炼官方文档定位来源引用:</b></div>
+                    <div><b>📄 智能解析定位与原文来源引用:</b></div>
                     <p className="mt-1 italic">&ldquo;{instantResult.projectInfo.sourceText}&rdquo;</p>
                   </div>
                 </div>

@@ -54,6 +54,11 @@ export default function ProjectCreate({ onBack, onProjectCreated, currentUser }:
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"info" | "reqs" | "tasks">("info");
 
+  // Multi-Provider config states
+  const [aiProvider, setAiProvider] = useState<"gemini" | "bailian">("gemini");
+  const [bailianModel, setBailianModel] = useState("qwen3.7-max");
+  const [bailianApiKey, setBailianApiKey] = useState("");
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
   };
@@ -94,23 +99,28 @@ export default function ProjectCreate({ onBack, onProjectCreated, currentUser }:
     });
   };
 
-  // Trigger Real Bailian Analysis Flow
+  // Trigger Dynamic Smart Analysis Flow
   const handleTriggerAIParse = async () => {
     if (!name) return alert("请先填写项目名称！");
     if (!file) return alert("需解析文件，请先上传招标文件！");
 
+    if (aiProvider === "bailian" && !bailianApiKey.trim()) {
+      setErrorMessage("⚠️ 您选择了阿里云百炼解析引擎，请输入有效的 API Key 继续处理。");
+      return;
+    }
+
     setIsParsing(true);
     setErrorMessage(null);
-    setParseStep("1/4: 正在读取并准备传输二进制文件...");
+    setParseStep("1/4: 正在读取本地并准备传输协议内容...");
 
     try {
       const base64Content = await convertFileToBase64(file);
       
-      setParseStep("2/4: 正在上传大文件至百炼支持兼容接口 (purpose=file-extract)...");
+      setParseStep(`2/4: 正在安全进行云端传输 [使用 ${aiProvider === "gemini" ? "内置 Gemini" : (`百炼 ${bailianModel}`)}]...`);
       
-      // Delay to let UI breathing
+      // Delay to let UI breathe
       await new Promise(r => setTimeout(r, 600));
-      setParseStep("3/4: 百炼接收完毕，正在对文档进行预解析、抽取及排队处理 (最多等待30秒)...");
+      setParseStep("3/4: 数据通道已就绪，正在命令智能大模型解析建档并提取条款...");
 
       const res = await fetch("/api/ai/analyze-tender-document", {
         method: "POST",
@@ -122,7 +132,10 @@ export default function ProjectCreate({ onBack, onProjectCreated, currentUser }:
         },
         body: JSON.stringify({
           fileName: file.name,
-          fileData: base64Content
+          fileData: base64Content,
+          provider: aiProvider,
+          customApiKey: aiProvider === "bailian" ? bailianApiKey.trim() : undefined,
+          model: aiProvider === "bailian" ? bailianModel.trim() : undefined
         })
       });
 
@@ -131,7 +144,7 @@ export default function ProjectCreate({ onBack, onProjectCreated, currentUser }:
         throw new Error(errResult.error || "大模型文件分析返回错误代码");
       }
 
-      setParseStep("4/4: 解析索引完成！正在调用 qwen-long 提取结构化合规清单及工作包建议...");
+      setParseStep("4/4: 解析快完成！正在组织抽取结构化合规清单及工作建议...");
       const reply = await res.json();
       
       // Keep the document project name aligned
@@ -293,7 +306,7 @@ export default function ProjectCreate({ onBack, onProjectCreated, currentUser }:
               <span>新建招标解析项目</span>
             </h2>
             <p className="text-xs text-stone-500 font-sans mt-1">
-              由阿里云百炼大模型（qwen-long）对招标文件进行一键公式分析，自动提炼指标并生成建议任务排期。
+              由智能大语言模型对招标文件进行一键深度分析，自动提炼指标并生成建议开发任务排期。
             </p>
           </div>
 
@@ -310,6 +323,103 @@ export default function ProjectCreate({ onBack, onProjectCreated, currentUser }:
                 placeholder="例如：普陀精密厂房施工项目"
                 className="w-full mt-1.5 p-2.5 bg-white border border-stone-300 rounded-lg font-sans text-sm focus:ring-1 focus:ring-brand focus:border-brand focus:outline-none text-stone-900 font-medium"
               />
+            </div>
+
+            {/* MODEL AND PROVIDER SWITCHER */}
+            <div className="bg-stone-50 border border-stone-200 rounded-lg p-4 text-left space-y-4">
+              <div className="flex items-center justify-between border-b border-stone-200 pb-2">
+                <span className="text-xs font-bold text-stone-850 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-zinc-900" />
+                  解析大模型与解析引擎配置
+                </span>
+                <span className="text-[10px] text-stone-400 font-mono">
+                  默认强力推荐 Gemini 核心
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAiProvider("gemini");
+                    setErrorMessage(null);
+                  }}
+                  className={`py-2 px-3 rounded-md text-xs font-bold font-sans transition-all flex items-center justify-center gap-1.5 border cursor-pointer ${
+                    aiProvider === "gemini"
+                      ? "bg-zinc-900 text-white border-zinc-900 shadow-sm"
+                      : "bg-white text-stone-600 border-stone-200 hover:bg-stone-100"
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  内置 Gemini (默认)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAiProvider("bailian");
+                    setErrorMessage(null);
+                  }}
+                  className={`py-2 px-3 rounded-md text-xs font-bold font-sans transition-all flex items-center justify-center gap-1.5 border cursor-pointer ${
+                    aiProvider === "bailian"
+                      ? "bg-zinc-900 text-white border-zinc-900 shadow-sm"
+                      : "bg-white text-stone-600 border-stone-200 hover:bg-stone-100"
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-amber-500" />
+                  阿里云百炼平台调用
+                </button>
+              </div>
+
+              {aiProvider === "gemini" && (
+                <div className="p-3 bg-emerald-50/55 border border-emerald-100 rounded text-[11px] text-emerald-900 leading-relaxed font-sans">
+                  <p className="font-bold mb-0.5">🌟 推荐说明：内置 Gemini 极速智能解析</p>
+                  <p className="text-stone-600 font-medium font-sans">
+                    系统已自动集成 Google Gemini 3.5 Flash 高性能开发组件，免去复杂的 API Key 配置。推荐直接用于项目！
+                  </p>
+                </div>
+              )}
+
+              {aiProvider === "bailian" && (
+                <div className="space-y-3 p-3 bg-amber-50/30 border border-amber-200/50 rounded-lg animate-fadeIn">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-stone-700 block col-span-2">
+                      阿里云百炼 API Key <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="password"
+                      value={bailianApiKey}
+                      onChange={(e) => setBailianApiKey(e.target.value)}
+                      placeholder="请输入您的 DASHSCOPE_API_KEY..."
+                      className="w-full px-2.5 py-1.5 border border-stone-300 rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-amber-500 text-stone-950 font-sans"
+                    />
+                    <p className="text-[10px] text-stone-400 font-sans">
+                      如果选择百炼，必须在此手动输入符合兼容接口规范的百炼调用密钥密钥。
+                    </p>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-stone-700 block">
+                      模型名称
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={bailianModel}
+                        onChange={(e) => setBailianModel(e.target.value)}
+                        placeholder="模型默认为 qwen3.7-max"
+                        className="flex-1 px-2.5 py-1.5 border border-stone-300 rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono text-stone-950"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setBailianModel("qwen3.7-max")}
+                        className="px-2.5 py-1.5 bg-stone-200 hover:bg-stone-300 text-stone-700 text-[10px] rounded font-bold cursor-pointer transition-colors"
+                      >
+                        重置默认
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Sandbox Drag-And-Drop area */}
@@ -335,7 +445,7 @@ export default function ProjectCreate({ onBack, onProjectCreated, currentUser }:
                     {file ? `已选定文件：${file.name}` : "拖入 PDF/DOCX 投标文件，或点按选择本地文件"}
                   </p>
                   <p className="text-xs text-stone-400 font-sans">
-                    百炼官方提取通道：大容量长文本自适应 (目的: file-extract)
+                    支持大容量长文本自适应深度切分和文档智能提取
                   </p>
                 </div>
               </div>
@@ -343,7 +453,7 @@ export default function ProjectCreate({ onBack, onProjectCreated, currentUser }:
 
             <button
               onClick={handleTriggerAIParse}
-              disabled={isParsing || !name || !file}
+              disabled={isParsing || !name || !file || (aiProvider === "bailian" && !bailianApiKey.trim())}
               className="w-full py-4 px-6 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white flex justify-center items-center gap-2.5 font-sans font-bold text-sm shadow-sm transition-colors cursor-pointer disabled:opacity-50 disabled:bg-stone-300"
             >
               {isParsing ? (
@@ -354,7 +464,7 @@ export default function ProjectCreate({ onBack, onProjectCreated, currentUser }:
               ) : (
                 <>
                   <Sparkles className="w-4 h-4 text-white animate-bounce" />
-                  <span className="font-sans font-bold">开始百炼官方文档理解分析</span>
+                  <span className="font-sans font-bold">开始执行大模型文档理解分析</span>
                 </>
               )}
             </button>
@@ -544,7 +654,7 @@ export default function ProjectCreate({ onBack, onProjectCreated, currentUser }:
 
                 <div className="mt-6 border-t border-stone-100 pt-6">
                   <h4 className="text-xs font-bold font-sans text-stone-800 uppercase mb-2">
-                    📄 百炼官方文档定位来源引用:
+                    📄 智能解析定位与原文来源引用:
                   </h4>
                   <blockquote className="p-3 bg-stone-50 border-l-4 border-emerald-500 rounded-r text-stone-600 font-sans text-xs leading-relaxed italic">
                     &ldquo;{parseResult.projectInfo.sourceText || '无直接引用段落或未识别明确来源部分。'}&rdquo;
@@ -752,7 +862,7 @@ export default function ProjectCreate({ onBack, onProjectCreated, currentUser }:
           <div className="flex gap-4 p-4 border border-stone-200 bg-stone-50/50 rounded-lg justify-end">
             <button
               onClick={() => {
-                if (confirm("确定要放弃当前的百炼解析成果，重新上传吗？")) {
+                if (confirm("确定要放弃当前的自主智能解析成果，重新上传吗？")) {
                   setParseResult(null);
                   setFile(null);
                 }
