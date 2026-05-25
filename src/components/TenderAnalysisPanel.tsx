@@ -98,6 +98,10 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
   const [instantResult, setInstantResult] = useState<AnalysisResult | null>(null);
   const [instantSubmitting, setInstantSubmitting] = useState(false);
   const [instantTab, setInstantTab] = useState<"info" | "reqs" | "tasks">("info");
+  const [aiDiagnostics, setAiDiagnostics] = useState<any>(null);
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [apiKeySaving, setApiKeySaving] = useState(false);
+  const [apiKeyMessage, setApiKeyMessage] = useState<string | null>(null);
 
   // ==================== CLASSIC DUAL-VIEW STATES ====================
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
@@ -131,7 +135,52 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
 
   useEffect(() => {
     loadDocuments();
+    loadAiDiagnostics();
   }, [projectId]);
+
+  const loadAiDiagnostics = async () => {
+    try {
+      const res = await fetch("/api/ai/config-diagnostics");
+      if (res.ok) {
+        const data = await res.json();
+        setAiDiagnostics(data);
+      }
+    } catch {
+      // Diagnostics are development-only; absence should not block the page.
+    }
+  };
+
+  const handleSaveApiKey = async () => {
+    const trimmedKey = apiKeyInput.trim();
+    if (!trimmedKey) {
+      setApiKeyMessage("Enter a DashScope / Qwen-Long API key.");
+      return;
+    }
+
+    setApiKeySaving(true);
+    setApiKeyMessage(null);
+    try {
+      const res = await fetch("/api/ai/config-api-key", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...headers
+        },
+        body: JSON.stringify({ apiKey: trimmedKey })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "API key save failed");
+      }
+      setApiKeyInput("");
+      setAiDiagnostics(data.diagnostics);
+      setApiKeyMessage(`Saved to local .env: ${data.maskedKey}`);
+    } catch (err: any) {
+      setApiKeyMessage(err.message || "API key save failed");
+    } finally {
+      setApiKeySaving(false);
+    }
+  };
 
   const loadDocuments = async () => {
     setLoadingDocs(true);
@@ -394,6 +443,11 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
   const handleInstantAIParse = async () => {
     if (!instantFile) return alert("请先选择要上传的补充/修改招标文件！");
 
+    if (aiDiagnostics && !aiDiagnostics.resolvedApiKeyConfigured) {
+      setGeneralError("Save a DashScope / Qwen-Long API key before running Bailian document analysis.");
+      return;
+    }
+
     setInstantParsing(true);
     setGeneralError(null);
     setInstantStep("1/4: 正在读取本地并准备进行大容量编码...");
@@ -560,6 +614,55 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
                 </p>
               </div>
 
+              <div className="border border-stone-200 rounded-lg p-4 bg-white text-left space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <ShieldAlert className={`w-4 h-4 ${aiDiagnostics?.resolvedApiKeyConfigured ? "text-emerald-600" : "text-amber-600"}`} />
+                    <div>
+                      <p className="text-xs font-bold text-stone-900">Qwen-Long API Key</p>
+                      <p className="text-[10px] text-stone-500">
+                        {aiDiagnostics?.resolvedApiKeyConfigured
+                          ? `Configured for ${aiDiagnostics.model || "qwen-long"}`
+                          : "Not configured. Save a local development key first."}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadAiDiagnostics}
+                    className="p-2 border border-stone-200 rounded-md text-stone-500 hover:text-stone-900 hover:bg-stone-50"
+                    title="Refresh config status"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    placeholder="Paste DashScope / Qwen-Long API key"
+                    className="flex-1 px-3 py-2 border border-stone-200 rounded-md text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                    autoComplete="off"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveApiKey}
+                    disabled={apiKeySaving}
+                    className="px-4 py-2 bg-stone-900 text-white text-xs font-bold rounded-md hover:bg-stone-800 disabled:opacity-50"
+                  >
+                    {apiKeySaving ? "Saving" : "Save"}
+                  </button>
+                </div>
+
+                {apiKeyMessage && (
+                  <p className={`text-[10px] font-medium ${apiKeyMessage.includes("Saved") ? "text-emerald-700" : "text-rose-700"}`}>
+                    {apiKeyMessage}
+                  </p>
+                )}
+              </div>
+
               {/* Upload Entrance */}
               <div className="border border-dashed border-stone-300 rounded-lg p-8 bg-stone-50 hover:bg-stone-100/30 transition-all text-center relative pointer-events-auto">
                 <input 
@@ -586,7 +689,7 @@ export default function TenderAnalysisPanel({ projectId, currentUser, onSyncComp
               <button
                 type="button"
                 onClick={handleInstantAIParse}
-                disabled={instantParsing || !instantFile}
+                disabled={instantParsing || !instantFile || Boolean(aiDiagnostics && !aiDiagnostics.resolvedApiKeyConfigured)}
                 className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-sans font-bold text-xs rounded-lg flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:bg-stone-300"
               >
                 {instantParsing ? (

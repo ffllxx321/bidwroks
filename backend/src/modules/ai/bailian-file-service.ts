@@ -53,6 +53,10 @@ export interface BailianAnalysisResult {
   missingInformation?: string[];
 }
 
+export function buildBailianFileReference(fileId: string): string {
+  return `fileid://${fileId}`;
+}
+
 export class BailianFileService {
   /**
    * Upload file to Bailian compatible files API
@@ -350,7 +354,7 @@ export class BailianFileService {
         },
         {
           role: "system",
-          content: `file_id://${fileId}`
+          content: buildBailianFileReference(fileId)
         },
         {
           role: "user",

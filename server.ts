@@ -10,6 +10,7 @@ import { parseDocumentToChunks } from "./backend/src/modules/ai/document-parser.
 import { verifyAIPermission } from "./backend/src/modules/permissions/ai-permission-checker.ts";
 import { extractTenderParamsFromChunks } from "./backend/src/modules/ai/extraction-engine.ts";
 import { ENV } from "./backend/src/config/env.ts";
+import { getAiConfigDiagnostics, isDevelopmentRuntime, saveDashscopeApiKey } from "./backend/src/config/ai-runtime-config.ts";
 import { BailianFileService } from "./backend/src/modules/ai/bailian-file-service.ts";
 
 dotenv.config();
@@ -1980,24 +1981,26 @@ app.get("/api/ai/active-provider", (req, res) => {
 
 // 5.6 GET active AI provider diagnostics (development only)
 app.get("/api/ai/config-diagnostics", (req, res) => {
-  const isDev = (ENV.APP_ENV === "development" || process.env.APP_ENV === "development" || !ENV.APP_ENV);
-  if (!isDev) {
+  if (!isDevelopmentRuntime()) {
     return res.status(403).json({ error: "Diagnostics endpoint only allowed in development mode." });
   }
 
-  const hasBailian = !!(process.env.BAILIAN_API_KEY || "").trim();
-  const hasDashscope = !!(process.env.DASHSCOPE_API_KEY || "").trim();
-  const hasAnyKey = hasBailian || hasDashscope;
+  res.json(getAiConfigDiagnostics());
+});
 
-  res.json({
-    aiProvider: ENV.AI_PROVIDER,
-    bailianApiKeyConfigured: hasBailian,
-    dashscopeApiKeyConfigured: hasDashscope,
-    resolvedApiKeyConfigured: hasAnyKey,
-    baseUrl: ENV.BAILIAN_BASE_URL,
-    model: ENV.BAILIAN_MODEL,
-    runtime: "server"
-  });
+// 5.6.1 POST save local DashScope API key (development only)
+app.post("/api/ai/config-api-key", (req, res) => {
+  if (!isDevelopmentRuntime()) {
+    return res.status(403).json({ error: "API key configuration endpoint only allowed in development mode." });
+  }
+
+  const apiKey = String(req.body?.apiKey || "").trim();
+  try {
+    const result = saveDashscopeApiKey(apiKey);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "Failed to save API key." });
+  }
 });
 
 // 5.7 POST Analyze Tender Document using Bailian compatible files API
